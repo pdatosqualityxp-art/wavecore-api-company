@@ -4,6 +4,7 @@ import deployedApp, { createApp } from '../index.js';
 
 const SUPABASE_URL = 'https://example.supabase.co';
 const ANON_KEY = 'public-anon-key';
+const CORS_ALLOWED_ORIGINS = ['https://wavecore-nu.vercel.app', 'http://localhost:5173'];
 const ORIGINAL_FETCH = globalThis.fetch;
 const CORPORATE_TABLES = [
   'almacen',
@@ -56,6 +57,25 @@ describe('Vercel request handler', () => {
       assert.equal(response.status, 200);
       assert.equal(payload.success, true);
       assert.equal(payload.endpointChat, '/api/chat');
+    } finally {
+      await new Promise((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    }
+  });
+
+  it('denies browser CORS when no origins are configured', async () => {
+    const app = createApp({ corsAllowedOrigins: [] });
+    const server = app.listen(0);
+    await new Promise((resolve) => server.once('listening', resolve));
+
+    try {
+      const response = await ORIGINAL_FETCH(`http://127.0.0.1:${server.address().port}/`, {
+        headers: { Origin: 'https://wavecore-nu.vercel.app' },
+      });
+
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('access-control-allow-origin'), null);
     } finally {
       await new Promise((resolve, reject) => {
         server.close((error) => error ? reject(error) : resolve());
@@ -129,6 +149,7 @@ describe('POST /api/chat authentication and RLS reads', () => {
       aiClient,
       supabaseUrl: SUPABASE_URL,
       supabaseAnonKey: ANON_KEY,
+      corsAllowedOrigins: CORS_ALLOWED_ORIGINS,
     }).listen(0);
     await new Promise((resolve) => server.once('listening', resolve));
     baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -143,6 +164,34 @@ describe('POST /api/chat authentication and RLS reads', () => {
       });
       server = undefined;
     }
+  });
+
+  it('allows CORS only for configured browser origins', async () => {
+    const allowedResponse = await ORIGINAL_FETCH(`${baseUrl}/`, {
+      headers: { Origin: 'https://wavecore-nu.vercel.app' },
+    });
+    const rejectedResponse = await ORIGINAL_FETCH(`${baseUrl}/`, {
+      headers: { Origin: 'https://untrusted.example' },
+    });
+
+    assert.equal(allowedResponse.headers.get('access-control-allow-origin'), 'https://wavecore-nu.vercel.app');
+    assert.equal(rejectedResponse.headers.get('access-control-allow-origin'), null);
+  });
+
+  it('handles preflight requests for configured browser origins', async () => {
+    const response = await ORIGINAL_FETCH(`${baseUrl}/api/chat`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'http://localhost:5173',
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'authorization,content-type',
+      },
+    });
+
+    assert.equal(response.status, 204);
+    assert.equal(response.headers.get('access-control-allow-origin'), 'http://localhost:5173');
+    assert.match(response.headers.get('access-control-allow-headers'), /authorization/i);
+    assert.match(response.headers.get('access-control-allow-methods'), /POST/);
   });
 
   it('forwards each caller bearer and anon apikey to Supabase, preserving RLS read states', async () => {

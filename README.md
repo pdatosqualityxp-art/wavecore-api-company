@@ -1,5 +1,13 @@
 # wavecore-api-company
 
+Browser CORS is denied unless `CORS_ALLOWED_ORIGINS` is set to a JSON array of exact origins. For local development and the production frontend, configure the same value in `.env` and the Vercel project environment:
+
+```env
+CORS_ALLOWED_ORIGINS=["https://wavecore-nu.vercel.app","http://localhost:5173"]
+```
+
+Use origins only (scheme, host, and optional port), without a path or trailing slash. Leave the variable unset or empty to deny browser CORS. CORS is a browser policy and does not replace API authentication.
+
 `POST /api/chat` requires a Supabase access token:
 
 ```http

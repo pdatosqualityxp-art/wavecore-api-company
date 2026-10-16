@@ -26,6 +26,38 @@ const MAX_OUTPUT_TOKENS = 2048;
 const OUTPUT_LIMIT_WARNING = 'La respuesta llegó al límite de recursos por consulta y puede estar incompleta. '
   + 'Intenta dividir la consulta en partes.';
 
+function parseCorsAllowedOrigins(value) {
+  if (value === undefined || value.trim() === '') {
+    return [];
+  }
+
+  let origins;
+  try {
+    origins = JSON.parse(value);
+  } catch (error) {
+    throw new Error('CORS_ALLOWED_ORIGINS must be a JSON array of exact browser origins', { cause: error });
+  }
+
+  if (!Array.isArray(origins) || origins.some((origin) => typeof origin !== 'string')) {
+    throw new TypeError('CORS_ALLOWED_ORIGINS must be a JSON array of exact browser origins');
+  }
+
+  for (const origin of origins) {
+    let parsedOrigin;
+    try {
+      parsedOrigin = new URL(origin);
+    } catch (error) {
+      throw new TypeError(`Invalid origin in CORS_ALLOWED_ORIGINS: ${origin}`, { cause: error });
+    }
+
+    if (!['http:', 'https:'].includes(parsedOrigin.protocol) || parsedOrigin.origin !== origin) {
+      throw new TypeError(`Invalid origin in CORS_ALLOWED_ORIGINS: ${origin}`);
+    }
+  }
+
+  return origins;
+}
+
 function getBearerToken(header) {
   if (typeof header !== 'string') {
     return null;
@@ -70,10 +102,13 @@ export function createApp({
   aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }),
   supabaseUrl = process.env.SUPABASE_URL,
   supabaseAnonKey = process.env.SUPABASE_ANON_KEY,
+  corsAllowedOrigins = parseCorsAllowedOrigins(process.env.CORS_ALLOWED_ORIGINS),
 } = {}) {
   const app = express();
 
-  app.use(cors());
+  app.use(cors({
+    origin: (origin, callback) => callback(null, Boolean(origin && corsAllowedOrigins.includes(origin))),
+  }));
   app.use(express.json());
 
   app.get('/', (_req, res) => {

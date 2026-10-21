@@ -1,5 +1,7 @@
 # wavecore-api-company
 
+The Express app and chat logic live under `src/`. Run the local server with `npm start`; the root `index.js` remains the Vercel handler and a compatibility export for existing consumers.
+
 Browser CORS is denied unless `CORS_ALLOWED_ORIGINS` is set to a JSON array of exact origins. For local development and the production frontend, configure the same value in `.env` and the Vercel project environment:
 
 ```env

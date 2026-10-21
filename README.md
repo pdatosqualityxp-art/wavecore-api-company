@@ -1,32 +1,107 @@
 # wavecore-api-company
 
-The Express app and chat logic live under `src/`. Run the local server with `npm start`; the root `index.js` remains the Vercel handler and a compatibility export for existing consumers.
+## Descripción general
 
-Browser CORS is denied unless `CORS_ALLOWED_ORIGINS` is set to a JSON array of exact origins. For local development and the production frontend, configure the same value in `.env` and the Vercel project environment:
+**WaveCore** es una plataforma full stack con IA generativa para analítica empresarial y RAG documental. Este repositorio contiene su **API backend** (`wavecore-api-company`): un servicio Express que recibe preguntas en lenguaje natural, lee los datos corporativos permitidos para la sesión del usuario en Supabase y genera la respuesta con Gemini.
 
-```env
-CORS_ALLOWED_ORIGINS=["https://wavecore-nu.vercel.app","http://localhost:5173"]
+Cada consulta se ejecuta con la sesión del propio usuario, de modo que solo se utilizan los datos que sus políticas de seguridad a nivel de fila (RLS) permiten ver.
+
+## Stack tecnológico
+
+- **Node.js** (ES Modules). Se recomienda Node.js 22 o superior, requerido por `@supabase/supabase-js`.
+- **Express 4** como framework HTTP y **cors** para la política de orígenes del navegador.
+- **Supabase** (`@supabase/supabase-js`) para base de datos y autenticación, con RLS.
+- **Google Gemini** (`@google/genai`) como modelo de IA generativa.
+- **dotenv** para la configuración local.
+- **node:test** (`node --test`) para las pruebas.
+- **Vercel** (`@vercel/node`) para el despliegue.
+
+## Instalación
+
+1. Instala las dependencias:
+
+   ```bash
+   npm install
+   ```
+
+2. Crea un archivo `.env` en la raíz a partir de [.env.example](./.env.example):
+
+   ```env
+   SUPABASE_URL=https://tu-proyecto.supabase.co
+   SUPABASE_ANON_KEY=tu_clave_anon_publica
+   GEMINI_API_KEY=tu_clave_de_gemini
+   GEMINI_MODEL=gemini-3.1-flash-lite
+   GEMINI_FALLBACK_MODEL=gemini-2.5-flash
+   CORS_ALLOWED_ORIGINS=["https://wavecore-nu.vercel.app","http://localhost:5173"]
+   ```
+
+   | Variable | Obligatoria | Descripción |
+   |---|---|---|
+   | `SUPABASE_URL` | Sí | URL del proyecto Supabase. |
+   | `SUPABASE_ANON_KEY` | Sí | Clave pública `anon`. No uses una clave `service_role`. |
+   | `GEMINI_API_KEY` | Sí | Clave de la API de Gemini. |
+   | `GEMINI_MODEL` | No | Modelo principal. Por defecto `gemini-3.1-flash-lite`. |
+   | `GEMINI_FALLBACK_MODEL` | No | Modelo de respaldo. Por defecto `gemini-2.5-flash`. |
+   | `CORS_ALLOWED_ORIGINS` | No | Array JSON de orígenes exactos permitidos. Si no se define, se deniega CORS de navegador. |
+   | `PORT` | No | Puerto local. Por defecto `3000`. |
+
+   Los orígenes de `CORS_ALLOWED_ORIGINS` deben ser solo esquema, host y puerto opcional, sin ruta ni barra final. En Vercel, configura las mismas variables en el proyecto.
+
+## Ejecución
+
+```bash
+npm start      # arranca el servidor (src/index.js)
+npm run dev    # arranca con recarga automática
+npm test       # ejecuta las pruebas
 ```
 
-Use origins only (scheme, host, and optional port), without a path or trailing slash. Leave the variable unset or empty to deny browser CORS. CORS is a browser policy and does not replace API authentication.
+Comprueba que está activo con `GET http://localhost:3000/`. Para consultar el chat necesitas un token de acceso de Supabase:
 
-`POST /api/chat` requires a Supabase access token:
-
-```http
-Authorization: Bearer <access_token>
-Content-Type: application/json
+```bash
+curl -X POST http://localhost:3000/api/chat \
+  -H "Authorization: Bearer TU_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"¿Qué clientes tengo?"}'
 ```
 
-The server creates a Supabase client for each request using `SUPABASE_ANON_KEY` as the public `apikey` and the caller's bearer token as `Authorization`. Database reads therefore run under the caller's RLS policies, including anonymous guest sessions. Do not configure or use a `service_role` key.
+Las pruebas usan respuestas simuladas de PostgREST y Gemini, por lo que no requieren credenciales reales.
 
-Requests without a bearer token receive HTTP 401. Expired/invalid Supabase tokens also receive HTTP 401; failures reading corporate tables return HTTP 502 instead of being represented as empty tables.
+### Endpoints
 
-Chat responses allow up to 2048 generated tokens. If Gemini reports that it reached this limit, the response includes a warning in both `reply` and `warning` that the answer may be incomplete.
+| Método | Ruta | Descripción |
+|---|---|---|
+| `GET` | `/` | Comprobación de estado. |
+| `POST` | `/api/chat` | Consulta en lenguaje natural. Requiere `Authorization: Bearer <token>` y un body `{ "message": "..." }`. |
 
-Gemini failures return an explicit error message; overload/rate-limit failures identify Gemini as temporarily oversaturated and return HTTP 503.
+## Estructura del proyecto
 
-Configure the primary Gemini model with the `GEMINI_MODEL` environment variable. For example, add `GEMINI_MODEL=gemini-3.1-flash-lite` to `.env` locally or create the same variable in the production environment settings. If unset, the server uses `gemini-3.1-flash-lite`. Each successful chat reply ends with the model used to generate it.
+```text
+.
+├── index.js                      # Adaptador para Vercel: reexporta la app y createApp
+├── vercel.json                   # Configuración de despliegue en Vercel
+├── src/
+│   ├── index.js                  # Arranque del servidor local (listen)
+│   ├── app.js                    # Express, middlewares, CORS y rutas (createApp)
+│   ├── controllers/
+│   │   └── chat.controller.js    # Valida la petición HTTP y construye la respuesta
+│   ├── services/
+│   │   └── chat.service.js       # Consulta de datos, Gemini, reintentos y registro
+│   └── infrastructure/
+│       └── supabase.js           # Cliente de Supabase por petición con el token del usuario
+└── test/
+    └── api.chat.test.js          # Pruebas de la API
+```
 
-If the primary model is overloaded (HTTP 503/429) after two attempts, the request switches to `GEMINI_FALLBACK_MODEL` (default `gemini-2.5-flash`). In that case the reply footer states the automatic switch and the response includes `fallbackUsed: true`.
+`createApp` acepta dependencias inyectables (`aiClient`, `supabaseUrl`, `supabaseAnonKey`, `corsAllowedOrigins`, `supabaseClientFactory`), lo que facilita las pruebas.
 
-Run the backend request/RLS-header tests with `npm test`. The tests use mocked PostgREST responses and do not require live credentials.
+## Funcionalidades especiales
+
+- **Seguridad con RLS:** el servidor crea un cliente de Supabase por petición con `SUPABASE_ANON_KEY` como `apikey` y el token del usuario como `Authorization`. Las lecturas se rigen por las políticas RLS del usuario, incluidas las sesiones anónimas. Nunca uses una clave `service_role`.
+- **Autenticación:** sin token Bearer, o con un token caducado o inválido, se devuelve HTTP 401. Un fallo al leer las tablas corporativas devuelve HTTP 502, en lugar de presentarse como tablas vacías.
+- **Estado por tabla:** la respuesta incluye `tableStatus`, que indica si cada tabla es legible y si tiene filas visibles para la sesión.
+- **Contexto corporativo:** el asistente responde basándose exclusivamente en los datos corporativos accesibles para la sesión y rechaza temas ajenos a la empresa.
+- **Reintentos y modelo de respaldo:** si el modelo principal está saturado (HTTP 503/429), se reintenta una vez y después se cambia a `GEMINI_FALLBACK_MODEL`. La respuesta indica `fallbackUsed: true` y el pie del texto detalla el cambio.
+- **Límite de salida:** las respuestas admiten hasta 2048 tokens. Si Gemini alcanza el límite, se añade un aviso en `reply` y en `warning`.
+- **Errores de Gemini explícitos:** la saturación devuelve HTTP 503 con un mensaje específico; otros fallos devuelven HTTP 502.
+- **Registro de consultas:** cada respuesta se guarda en la tabla `chat_logs` (modelo, prompt, respuesta, tokens e IP del cliente), y `databaseStatus.saved` indica si se guardó.
+- **CORS restrictivo:** solo se permiten los orígenes configurados; CORS no sustituye a la autenticación de la API.
